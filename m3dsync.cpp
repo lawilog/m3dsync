@@ -48,7 +48,7 @@ int help(const string& prog_name, const string& action)
 	}
 	else
 	{
-		cout<< "m3dsync version 1.0.0\n"
+		cout<< "m3dsync version 1.1.0\n"
 			"usage: "<< prog_name <<" action arguments\n"
 			"where action is one from the following examples:\n"
 			<< prog_name <<" help [action]\n"
@@ -164,6 +164,8 @@ int scan(const string& DBpath, const vector<string>& dirpaths)
 		cerr<<"Error: Could not open file \""<< DBpath <<"\" for writing."<<endl;
 		return 1;
 	}
+	
+	cout<<"Scanning files... (Please wait.)"<<endl;
 	
 	// mimic find $dirpath -find f -exec mp3hash {} \;
 	auto hash2file = [&db_file](const string& fileToBeHashed) {
@@ -339,46 +341,61 @@ int lsdup(const string& DBpath, const string& duppath)
 		lines.push_back(line);
 	}
 	
-	sort(lines.begin(), lines.end());
+	sort(lines.begin(), lines.end()); // after sort, same hashes will be on consecutive lines
 	
-	unsigned ngroups = 0;
+	struct dup_group
+	{
+		unsigned long long mem_sum;
+		vector<string> paths;
+	};
+	vector<dup_group> dup_groups;
+	
 	unsigned long long wasted_mem = 0;
 	string last_hash = "#", last_path = "#";
 	unsigned long long last_mem = 0;
 	bool last_were_equal = false;
 	for(auto line: lines)
 	{
-		unsigned pos = line.find(' ');
-		unsigned pos2 = line.find(' ', pos+1);
-		string hash = line.substr(0, pos);
-		string size = line.substr(pos+1, pos2);
-		string path = line.substr(pos2+1);
+		const unsigned pos = line.find(' ');
+		const unsigned pos2 = line.find(' ', pos+1);
+		const string hash = line.substr(0, pos);
+		const string size = line.substr(pos+1, pos2);
+		const string path = line.substr(pos2+1);
 		if(path.empty()) continue;
-		unsigned long long mem = stoll(size);
-		if(hash == last_hash)
-		{
-			out_file<< last_path <<'\n';
-			wasted_mem += last_mem;
-			last_were_equal = true;
-		}
-		else
+		const unsigned long long mem = stoll(size);
+		const bool hashes_are_equal = (hash == last_hash);
+		if(hashes_are_equal)
 		{
 			if(last_were_equal)
 			{
-				++ngroups;
-				wasted_mem += last_mem;
-				out_file<< last_path <<"\n\n";
+				dup_groups.back().mem_sum += mem;
+				dup_groups.back().paths.push_back(path);
+				wasted_mem += mem;
 			}
-			last_were_equal = false;
+			else
+				dup_groups.push_back({last_mem + mem, {last_path, path}});
 		}
+		last_were_equal = hashes_are_equal;
 		
 		last_hash = hash;
 		last_path = path;
 		last_mem  = mem;
 	}
 	
+	// sort groups descending by memory
+	sort(dup_groups.begin(), dup_groups.end(), [](const dup_group& g, const dup_group& h) {return g.mem_sum > h.mem_sum;});
+	
+	for(const dup_group& g: dup_groups)
+	{
+		out_file<<"# "<< LW::bytes2str(g.mem_sum) <<'\n';
+		for(const string& path: g.paths)
+			out_file<< path <<'\n';
+		
+		out_file<<'\n';
+	}
+	
 	auto t1 = chrono::high_resolution_clock::now();
-	cout<<"Found "<< ngroups <<" group of duplicates in about "<< chrono::duration_cast<chrono::milliseconds>(t1-t0).count() <<" ms.\n"
+	cout<<"Found "<< dup_groups.size() <<" group of duplicates in about "<< chrono::duration_cast<chrono::milliseconds>(t1-t0).count() <<" ms.\n"
 		"Potentially wasting "<< LW::bytes2str(wasted_mem) <<". "
 		"See file \""<< duppath <<"\"."<<endl;
 	
@@ -435,11 +452,6 @@ int main(int argc, char** argv)
 		};
 		const string onlyPaths[2] = {"only-on-"+bases[0]+".txt", "only-on-"+bases[1]+".txt"};
 		const string copyPaths[2] = {"copy-from-"+bases[0]+".sh", "copy-from-"+bases[1]+".sh"};
-		
-		cout<<onlyPaths[0]<<endl;
-		cout<<onlyPaths[1]<<endl;
-		cout<<copyPaths[0]<<endl;
-		cout<<copyPaths[1]<<endl;
 		
 		return comp(dbPaths, onlyPaths, copyPaths);
 	}

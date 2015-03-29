@@ -3,6 +3,7 @@
 
 // readable C++ implementation, slower than C due to many mallocs
 
+#include <iostream>
 #include <string>
 #include <functional>
 #include <sys/types.h>
@@ -12,7 +13,10 @@ bool find_files_in_dir(const std::string& dir, std::function<void (const std::st
 {
 	DIR *dp = opendir(dir.c_str());
 	if(dp == NULL)
+	{
+		std::cerr<<"Could not open directory \""<< dir <<"\"."<<std::endl;
 		return false;
+	}
 	
 	struct dirent* ep;
 	while( (ep = readdir(dp)) )
@@ -22,10 +26,10 @@ bool find_files_in_dir(const std::string& dir, std::function<void (const std::st
 			continue;
 		
 		std::string path = dir + "/" + fname;
-		if(ep->d_type & DT_REG)
-			callback(path);
-		else if(ep->d_type & DT_DIR)
+		if(ep->d_type & DT_DIR)
 			find_files_in_dir(path, callback);
+		else if(ep->d_type & DT_REG)
+			callback(path);
 	}
 	
 	closedir(dp);
