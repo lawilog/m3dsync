@@ -48,7 +48,7 @@ int help(const string& prog_name, const string& action)
 	}
 	else
 	{
-		cout<< "m3dsync version 1.1.0\n"
+		cout<< "m3dsync version 1.2.0\n"
 			"usage: "<< prog_name <<" action arguments\n"
 			"where action is one from the following examples:\n"
 			<< prog_name <<" help [action]\n"
@@ -82,7 +82,7 @@ int mp3hash(const string& filepath, ostream& outs=cout)
 	mp3file.seekg(0, ios::end);
 	unsigned filesize = mp3file.tellg();
 	mp3file.seekg(0, ios::beg);
-	if(filesize == -1) cerr<<"Error: Could not determine size of file \""<<filepath<<"\"."<<endl;
+	if((streampos)(filesize) == (streampos)(-1)) cerr<<"Error: Could not determine size of file \""<<filepath<<"\"."<<endl;
 	
 	// choosing hashing method (how much to read from file)
 	string prefix;
@@ -186,7 +186,7 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 	auto t0 = chrono::high_resolution_clock::now();
 	
 	// load db_files
-	unordered_multimap<string, unsigned> ummap[2];
+	unordered_multimap<string, size_t> ummap[2];
 	ifstream db_files[2];
 	for(int f = 0; f < 2; ++f)
 	{
@@ -200,11 +200,11 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		string hash;
 		while(db_files[f].good())
 		{
-			unsigned fpos = db_files[f].tellg();
+			size_t fpos = db_files[f].tellg();
 			getline(db_files[f], hash, ' '); // read from line start to first space
 			db_files[f].ignore(numeric_limits<streamsize>::max(), '\n'); // ignore rest of the line
 			// ummap[f].emplace(hash, pos);
-			ummap[f].insert(pair<string, unsigned>(hash, fpos));
+			ummap[f].insert(pair<string, size_t>(hash, fpos));
 		}
 	}
 	
@@ -256,8 +256,8 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 				db_files[f].seekg(element.second); // go back into to the corresponding line in the file
 				getline(db_files[f], line); // read the complete line
 				
-				unsigned pos = line.find(' ');
-				unsigned pos2 = line.find(' ', pos+1); // find second occurance of a space
+				size_t pos = line.find(' ');
+				size_t pos2 = line.find(' ', pos+1); // find second occurance of a space
 				string path = line.substr(pos2+1);
 				// if(path.empty()) continue;
 				missing_files.push_back(path); // remember missing path
@@ -278,11 +278,11 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		// write diff to sh files
 		// get common prefix
 		string common_prefix = missing_files.front();
-		unsigned ppos = common_prefix.length();
+		size_t ppos = common_prefix.length();
 		for(auto missing_file: missing_files)
 		{
 			if(missing_file.empty()) continue;
-			for(unsigned i = 0; i < ppos; ++i)
+			for(size_t i = 0; i < ppos; ++i)
 				if(common_prefix[i] != missing_file[i])
 					ppos = i;
 		}
@@ -292,7 +292,8 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		string last_dir = "#";
 		for(auto missing_file: missing_files)
 		{
-			string dir = missing_file.substr(ppos, missing_file.rfind('/'));
+			size_t pos_last_slash = missing_file.rfind('/');
+			string dir = missing_file.substr(ppos, pos_last_slash>ppos ? pos_last_slash-ppos : string::npos);
 			if(dir != last_dir)
 			{
 				last_dir = dir;
