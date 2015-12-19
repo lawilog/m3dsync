@@ -172,7 +172,7 @@ int scan(const string& DBpath, const vector<string>& dirpaths)
 		mp3hash(fileToBeHashed, db_file);
 	};
 	
-	for(auto dirpath: dirpaths)
+	for(auto& dirpath: dirpaths)
 		find_files_in_dir(dirpath, hash2file);
 	
 	auto t1 = chrono::high_resolution_clock::now();
@@ -248,7 +248,7 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		string line;
 		unsigned long long mem_sum = 0;
 		vector<string> missing_files;
-		for(auto element: ummap[f])
+		for(auto& element: ummap[f])
 		{
 			auto not_found = ummap[1-f].end();
 			if(ummap[1-f].find(element.first) == not_found) // if in file (f), but not in file (1-f)
@@ -272,14 +272,14 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		sort(missing_files.begin(), missing_files.end());
 		
 		// write diff to txt files
-		for(auto missing_file: missing_files)
+		for(auto& missing_file: missing_files)
 			txt_files[f] << missing_file << '\n';
 		
 		// write diff to sh files
 		// get common prefix
 		string common_prefix = missing_files.front();
 		size_t ppos = common_prefix.length();
-		for(auto missing_file: missing_files)
+		for(auto& missing_file: missing_files)
 		{
 			if(missing_file.empty()) continue;
 			for(size_t i = 0; i < ppos; ++i)
@@ -290,7 +290,7 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		
 		// mkdir commands
 		string last_dir = "#";
-		for(auto missing_file: missing_files)
+		for(auto& missing_file: missing_files)
 		{
 			size_t pos_last_slash = missing_file.rfind('/');
 			string dir = missing_file.substr(ppos, pos_last_slash>ppos ? pos_last_slash-ppos : string::npos);
@@ -302,7 +302,7 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		}
 		
 		// cp commands
-		for(auto missing_file: missing_files)
+		for(auto& missing_file: missing_files)
 		{
 			string dest_path = missing_file.substr(ppos, string::npos);
 			sh_files[f]<<"cp \""<< missing_file <<"\" \"$dest/"<< dest_path <<"\"\n";
@@ -355,7 +355,7 @@ int lsdup(const string& DBpath, const string& duppath)
 	string last_hash = "#", last_path = "#";
 	unsigned long long last_mem = 0;
 	bool last_were_equal = false;
-	for(auto line: lines)
+	for(auto& line: lines)
 	{
 		const unsigned pos = line.find(' ');
 		const unsigned pos2 = line.find(' ', pos+1);
