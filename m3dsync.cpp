@@ -11,6 +11,7 @@
 // #include <io.h>
 #include "bytes2str.hpp"
 #include "find_files_in_dir.hpp"
+#include "string_replace.hpp"
 using namespace std;
 
 int help(const string& prog_name, const string& action)
@@ -149,14 +150,21 @@ int mp3hash(const string& filepath, ostream& outs=cout)
 	}
 	const string mp3hash_ascii = prefix+hexhash;
 	
-	outs<< mp3hash_ascii <<' '<< filesize <<' '<< filepath <<endl;
+	if(filepath.rfind('\n') == string::npos) // NTFS allows line breaks in filenames...
+		outs<< mp3hash_ascii <<' '<< filesize <<' '<< filepath <<endl;
+	else // try to avoid some trouble
+	{
+		string filepath2 = filepath;
+		replace(filepath2.begin(), filepath2.end(), '\n', ' ');
+		outs<< mp3hash_ascii <<' '<< filesize <<' '<< filepath2 <<endl;
+	}
 	
 	return 0;
 }
 
 int scan(const string& DBpath, const vector<string>& dirpaths)
 {
-	auto t0 = chrono::high_resolution_clock::now();
+	const auto t0 = chrono::high_resolution_clock::now();
 	
 	ofstream db_file(DBpath.c_str());
 	if(! db_file)
@@ -175,7 +183,7 @@ int scan(const string& DBpath, const vector<string>& dirpaths)
 	for(auto& dirpath: dirpaths)
 		find_files_in_dir(dirpath, hash2file);
 	
-	auto t1 = chrono::high_resolution_clock::now();
+	const auto t1 = chrono::high_resolution_clock::now();
 	cout<<"Created database file \""<< DBpath <<"\" in about "<< chrono::duration_cast<chrono::seconds>(t1-t0).count() <<" seconds."<<endl;
 	
 	return 0;
@@ -183,7 +191,7 @@ int scan(const string& DBpath, const vector<string>& dirpaths)
 
 int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string (&copyPaths)[2])
 {
-	auto t0 = chrono::high_resolution_clock::now();
+	const auto t0 = chrono::high_resolution_clock::now();
 	
 	// load db_files
 	unordered_multimap<string, size_t> ummap[2];
@@ -248,7 +256,7 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		string line;
 		unsigned long long mem_sum = 0;
 		vector<string> missing_files;
-		for(auto& element: ummap[f])
+		for(const auto& element: ummap[f])
 		{
 			auto not_found = ummap[1-f].end();
 			if(ummap[1-f].find(element.first) == not_found) // if in file (f), but not in file (1-f)
@@ -256,13 +264,18 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 				db_files[f].seekg(element.second); // go back into to the corresponding line in the file
 				getline(db_files[f], line); // read the complete line
 				
-				size_t pos = line.find(' ');
-				size_t pos2 = line.find(' ', pos+1); // find second occurance of a space
-				string path = line.substr(pos2+1);
-				// if(path.empty()) continue;
-				missing_files.push_back(path); // remember missing path
-				
-				mem_sum += stoll(line.substr(pos+1, pos2)); // add up file sizes
+				const size_t pos = line.find(' ');
+				const size_t pos2 = line.find(' ', pos+1); // find second occurance of a space
+				if(pos == string::npos || pos2 == string::npos)
+					cerr<<"# Ignored line \""<< element.first <<"...\", because it did not have two spaces."<<endl;
+				else
+				{
+					const string path = line.substr(pos2+1);
+					// if(path.empty()) continue;
+					missing_files.push_back(path); // remember missing path
+					
+					mem_sum += stoll(line.substr(pos+1, pos2)); // add up file sizes
+				}
 			}
 		}
 		
@@ -277,23 +290,28 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		
 		// write diff to sh files
 		// get common prefix
-		string common_prefix = missing_files.front();
-		size_t ppos = common_prefix.length();
-		for(auto& missing_file: missing_files)
+		string common_prefix = "";
+		size_t ppos = 0;
+		if(! missing_files.empty())
 		{
-			if(missing_file.empty()) continue;
-			for(size_t i = 0; i < ppos; ++i)
-				if(common_prefix[i] != missing_file[i])
-					ppos = i;
+			missing_files.front();
+			ppos = common_prefix.length();
+			for(auto& missing_file: missing_files)
+			{
+				if(missing_file.empty()) continue;
+				for(size_t i = 0; i < ppos; ++i)
+					if(common_prefix[i] != missing_file[i])
+						ppos = i;
+			}
+			// common_prefix = common_prefix.substr(0, ppos);
 		}
-		// common_prefix = common_prefix.substr(0, ppos);
 		
 		// mkdir commands
 		string last_dir = "#";
 		for(auto& missing_file: missing_files)
 		{
-			size_t pos_last_slash = missing_file.rfind('/');
-			string dir = missing_file.substr(ppos, pos_last_slash>ppos ? pos_last_slash-ppos : string::npos);
+			const size_t pos_last_slash = missing_file.rfind('/');
+			const string dir = missing_file.substr(ppos, pos_last_slash>ppos ? pos_last_slash-ppos : string::npos);
 			if(dir != last_dir)
 			{
 				last_dir = dir;
@@ -305,11 +323,11 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		for(auto& missing_file: missing_files)
 		{
 			string dest_path = missing_file.substr(ppos, string::npos);
-			sh_files[f]<<"cp \""<< missing_file <<"\" \"$dest/"<< dest_path <<"\"\n";
+			sh_files[f]<<"cp \""<< string_replace(missing_file, "`", "\\`") <<"\" \"$dest/"<< dest_path <<"\"\n";
 		}
 	}
 	
-	auto t1 = chrono::high_resolution_clock::now();
+	const auto t1 = chrono::high_resolution_clock::now();
 	cout<<"Comparision done in about "<< chrono::duration_cast<chrono::milliseconds>(t1-t0).count() <<" ms.\n"
 		"Use those files:\n"<< onlyPaths[0] <<'\n'<< onlyPaths[1] <<'\n'<< copyPaths[0] <<'\n'<< copyPaths[1] <<endl;
 	
@@ -318,7 +336,7 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 
 int lsdup(const string& DBpath, const string& duppath)
 {
-	auto t0 = chrono::high_resolution_clock::now();
+	const auto t0 = chrono::high_resolution_clock::now();
 	
 	ifstream db_file(DBpath);
 	if(! db_file)
@@ -357,8 +375,8 @@ int lsdup(const string& DBpath, const string& duppath)
 	bool last_were_equal = false;
 	for(auto& line: lines)
 	{
-		const unsigned pos = line.find(' ');
-		const unsigned pos2 = line.find(' ', pos+1);
+		const size_t pos = line.find(' ');
+		const size_t pos2 = line.find(' ', pos+1);
 		const string hash = line.substr(0, pos);
 		const string size = line.substr(pos+1, pos2);
 		const string path = line.substr(pos2+1);
@@ -395,7 +413,7 @@ int lsdup(const string& DBpath, const string& duppath)
 		out_file<<'\n';
 	}
 	
-	auto t1 = chrono::high_resolution_clock::now();
+	const auto t1 = chrono::high_resolution_clock::now();
 	cout<<"Found "<< dup_groups.size() <<" group of duplicates in about "<< chrono::duration_cast<chrono::milliseconds>(t1-t0).count() <<" ms.\n"
 		"Potentially wasting "<< LW::bytes2str(wasted_mem) <<". "
 		"See file \""<< duppath <<"\"."<<endl;
@@ -444,7 +462,7 @@ int main(int argc, char** argv)
 			return help(prog_name, action);
 		
 		string dbPaths[2] = {argv[2], argv[3]};
-		string::size_type pos[2] = {dbPaths[0].rfind('/'), dbPaths[1].rfind('/')};
+		const string::size_type pos[2] = {dbPaths[0].rfind('/'), dbPaths[1].rfind('/')};
 		if(pos[0] != string::npos) dbPaths[0] = dbPaths[0].substr(pos[0]+1);
 		if(pos[1] != string::npos) dbPaths[1] = dbPaths[1].substr(pos[1]+1);
 		const string bases[2] = {

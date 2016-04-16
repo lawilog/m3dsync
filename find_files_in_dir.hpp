@@ -1,7 +1,7 @@
 #ifndef _LW_FIND_FILES_IN_DIR_
 #define _LW_FIND_FILES_IN_DIR_
 
-// readable C++ implementation, slower than C due to many mallocs
+// readable C++ implementation, slower than C due to many mallocs and indirect std::function call
 
 #include <iostream>
 #include <string>
@@ -21,11 +21,11 @@ bool find_files_in_dir(const std::string& dir, std::function<void (const std::st
 	struct dirent* ep;
 	while( (ep = readdir(dp)) )
 	{
-		std::string fname = ep->d_name;
+		const std::string fname = ep->d_name;
 		if(fname=="." || fname=="..")
 			continue;
 		
-		std::string path = dir + "/" + fname;
+		const std::string path = dir + "/" + fname;
 		if(ep->d_type & DT_DIR)
 			find_files_in_dir(path, callback);
 		else if(ep->d_type & DT_REG)
@@ -79,6 +79,36 @@ bool find_files_in_dir(const char* dir, void (*callback)(const char* filepath))
 	closedir(dp);
 	return true;
 }
+
+// callback function as template parameter:
+template <void (*callback)(const std::string&)>
+void find_files_in_dir(const std::string& dir)
+{
+	DIR *dp = opendir(dir.c_str());
+	if(dp == NULL)
+	{
+		std::cerr<<"Could not open directory \""<< dir <<"\"."<<std::endl;
+		return false;
+	}
+	
+	struct dirent* ep;
+	while( (ep = readdir(dp)) )
+	{
+		const std::string fname = ep->d_name;
+		if(fname=="." || fname=="..")
+			continue;
+		
+		const std::string path = dir + "/" + fname;
+		if(ep->d_type & DT_DIR)
+			find_files_in_dir<callback>(path);
+		else if(ep->d_type & DT_REG)
+			callback(path);
+	}
+	
+	closedir(dp);
+	return true;
+}
+
 */
 
 #endif // _LW_FIND_FILES_IN_DIR_
