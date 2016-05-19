@@ -34,12 +34,15 @@ int help(const string& prog_name, const string& action)
 	}
 	else if(action == "comp")
 	{
-		cout<< prog_name <<" comp DB-A.dat DB-B.dat\n"
+		cout<< prog_name <<" comp DB-A.dat DB-B.dat [/output/basedir]\n"
 			"will compare the databases in DB-A.dat and DB-B.dat. It will create the following files:\n"
 			"only-on-DB-A.txt  - containing (line by line) the paths to all files that are only in DB-A\n"
 			"only-on-DB-B.txt  - containing (line by line) the paths to all files that are only in DB-B\n"
 			"copy-from-DB-A.sh - a script allowing to copy all files only A has to a destination (like external drive)\n"
-			"copy-from-DB-B.sh - a script allowing to copy all files only B has to a destination (like external drive)"<<endl;
+			"copy-from-DB-B.sh - a script allowing to copy all files only B has to a destination (like external drive)\n"
+			"matches-from-DB-A-to-DB-B.dat - line by line each path in DB-A [tab] first match in DB-B\n"
+			"matches-from-DB-B-to-DB-A.dat - line by line each path in DB-B [tab] first match in DB-A\n\n"
+			"If /output/basedir is provided, all above output files will be created there. Otherwise, they are created in the current working directory (possibly overwriting files with the same names)."<<endl;
 	}
 	else if(action == "lsdup")
 	{
@@ -55,7 +58,7 @@ int help(const string& prog_name, const string& action)
 			<< prog_name <<" help [action]\n"
 			<< prog_name <<" hash /some/file.mp3 [file2.avi ...]\n"
 			<< prog_name <<" scan DB.dat /path/to/dir [/other/path]\n"
-			<< prog_name <<" comp DB-A.dat DB-B.dat\n"
+			<< prog_name <<" comp DB-A.dat DB-B.dat [/output/basedir]\n"
 			<< prog_name <<" lsdup DB.dat dup.txt" <<endl;
 		
 		if(action != "")
@@ -189,7 +192,7 @@ int scan(const string& DBpath, const vector<string>& dirpaths)
 	return 0;
 }
 
-int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string (&copyPaths)[2])
+int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string (&copyPaths)[2], const string (&matchPaths)[2])
 {
 	const auto t0 = chrono::high_resolution_clock::now();
 	
@@ -212,7 +215,8 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 			getline(db_files[f], hash, ' '); // read from line start to first space
 			db_files[f].ignore(numeric_limits<streamsize>::max(), '\n'); // ignore rest of the line
 			// ummap[f].emplace(hash, pos);
-			ummap[f].insert(pair<string, size_t>(hash, fpos));
+			if(! hash.empty())
+				ummap[f].insert(pair<string, size_t>(hash, fpos));
 		}
 	}
 	
@@ -249,33 +253,59 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 		chmod(copyPaths[h].c_str(), S_IWRITE | S_IREAD | S_IEXEC); // return value not checked, if it fails... we dont care
 	}
 	
+	// create output match files
+	ofstream match_files[2];
 	for(int f = 0; f < 2; ++f)
 	{
-		// create diff
-		db_files[f].clear(); // we have read until file read pointer switched to !good(), so reset state
-		string line;
+		match_files[f].open(matchPaths[f].c_str());
+		if(! match_files[f])
+		{
+			cerr<<"Error: Could not open file \""<< matchPaths[f] <<"\" for writing."<<endl;
+			return 1;
+		}
+	}
+	
+	// create diff
+	db_files[0].clear(); // we have read until file read pointer switched to !good(), so reset state
+	db_files[1].clear();
+	for(int f = 0; f < 2; ++f)
+	{
+		string line, line2;
 		unsigned long long mem_sum = 0;
 		vector<string> missing_files;
+		const auto not_found = ummap[1-f].end();
 		for(const auto& element: ummap[f])
 		{
-			auto not_found = ummap[1-f].end();
-			if(ummap[1-f].find(element.first) == not_found) // if in file (f), but not in file (1-f)
+			db_files[f].seekg(element.second); // go back into to the corresponding line in the file
+			getline(db_files[f], line); // read the complete line
+			if(! db_files[f].good()) cerr<<"! db_files["<<f<<"]"<<endl;
+			try
 			{
-				db_files[f].seekg(element.second); // go back into to the corresponding line in the file
-				getline(db_files[f], line); // read the complete line
-				
 				const size_t pos = line.find(' ');
-				const size_t pos2 = line.find(' ', pos+1); // find second occurance of a space
-				if(pos == string::npos || pos2 == string::npos)
-					cerr<<"# Ignored line \""<< element.first <<"...\", because it did not have two spaces."<<endl;
+				if(pos == string::npos)
+					throw invalid_argument("no space found");
+				
+				const size_t pos2 = line.find(' ', pos+1); // find second occurrence of a space
+				if(pos2 == string::npos)
+					throw invalid_argument("no second space found");
+				
+				const string path = line.substr(pos2+1);
+				const auto first_matching_partner = ummap[1-f].find(element.first);
+				if(first_matching_partner == not_found) // if in file (f), but not in file (1-f)
+				{
+					missing_files.push_back(path); // remember missing path
+					mem_sum += stoull(line.substr(pos+1, pos2)); // add up file sizes
+				}
 				else
 				{
-					const string path = line.substr(pos2+1);
-					// if(path.empty()) continue;
-					missing_files.push_back(path); // remember missing path
-					
-					mem_sum += stoll(line.substr(pos+1, pos2)); // add up file sizes
+					db_files[1-f].seekg(first_matching_partner->second);
+					getline(db_files[1-f], line2);
+					match_files[f] << path <<"\t"<< &line2.at(line2.find(' ', line2.find(' ')+1)+1) <<"\n";
 				}
+			}
+			catch(const logic_error& e) // std::invalid_argument
+			{
+				cerr<<"# Ignored improperly formatted line \""<< line <<"\" ("<< e.what() <<")."<<endl;
 			}
 		}
 		
@@ -329,7 +359,7 @@ int comp(const string (&dbPaths)[2], const string (&onlyPaths)[2], const string 
 	
 	const auto t1 = chrono::high_resolution_clock::now();
 	cout<<"Comparision done in about "<< chrono::duration_cast<chrono::milliseconds>(t1-t0).count() <<" ms.\n"
-		"Use those files:\n"<< onlyPaths[0] <<'\n'<< onlyPaths[1] <<'\n'<< copyPaths[0] <<'\n'<< copyPaths[1] <<endl;
+		"Use those files:\n"<< onlyPaths[0] <<'\n'<< onlyPaths[1] <<'\n'<< copyPaths[0] <<'\n'<< copyPaths[1] << '\n' << matchPaths[0] <<'\n'<< matchPaths[1] <<endl;
 	
 	return 0;
 }
@@ -375,30 +405,45 @@ int lsdup(const string& DBpath, const string& duppath)
 	bool last_were_equal = false;
 	for(auto& line: lines)
 	{
-		const size_t pos = line.find(' ');
-		const size_t pos2 = line.find(' ', pos+1);
-		const string hash = line.substr(0, pos);
-		const string size = line.substr(pos+1, pos2);
-		const string path = line.substr(pos2+1);
-		if(path.empty()) continue;
-		const unsigned long long mem = stoll(size);
-		const bool hashes_are_equal = (hash == last_hash);
-		if(hashes_are_equal)
+		try
 		{
-			if(last_were_equal)
+			const size_t pos = line.find(' ');
+			if(pos == string::npos)
+				throw invalid_argument("no space found");
+			
+			const size_t pos2 = line.find(' ', pos+1);
+			if(pos2 == string::npos)
+				throw invalid_argument("no second space found");
+			
+			const string hash = line.substr(0, pos);
+			const string size = line.substr(pos+1, pos2);
+			const string path = line.substr(pos2+1);
+			if(path.empty())
+				throw invalid_argument("empty path");
+			
+			const unsigned long long mem = stoull(size);
+			const bool hashes_are_equal = (hash == last_hash);
+			if(hashes_are_equal)
 			{
-				dup_groups.back().mem_sum += mem;
-				dup_groups.back().paths.push_back(path);
-				wasted_mem += mem;
+				if(last_were_equal)
+				{
+					dup_groups.back().mem_sum += mem;
+					dup_groups.back().paths.push_back(path);
+					wasted_mem += mem;
+				}
+				else
+					dup_groups.push_back({last_mem + mem, {last_path, path}});
 			}
-			else
-				dup_groups.push_back({last_mem + mem, {last_path, path}});
+			last_were_equal = hashes_are_equal;
+			
+			last_hash = hash;
+			last_path = path;
+			last_mem  = mem;
 		}
-		last_were_equal = hashes_are_equal;
-		
-		last_hash = hash;
-		last_path = path;
-		last_mem  = mem;
+		catch(const logic_error& e)
+		{
+			cerr<<"# Ignored improperly formatted line \""<< line <<"\"... ("<< e.what() <<")."<<endl;
+		}
 	}
 	
 	// sort groups descending by memory
@@ -461,18 +506,22 @@ int main(int argc, char** argv)
 		if(argc <= 3)
 			return help(prog_name, action);
 		
-		string dbPaths[2] = {argv[2], argv[3]};
+		const string dbPaths[2] = {argv[2], argv[3]};
+		const string basedir = argc>4 ? argv[4] : ".";
 		const string::size_type pos[2] = {dbPaths[0].rfind('/'), dbPaths[1].rfind('/')};
-		if(pos[0] != string::npos) dbPaths[0] = dbPaths[0].substr(pos[0]+1);
-		if(pos[1] != string::npos) dbPaths[1] = dbPaths[1].substr(pos[1]+1);
 		const string bases[2] = {
-			dbPaths[0].substr(0, dbPaths[0].rfind(".dat")),
-			dbPaths[1].substr(0, dbPaths[1].rfind(".dat"))
+			(pos[0] == string::npos) ? dbPaths[0] : dbPaths[0].substr(pos[0]+1, dbPaths[0].rfind(".dat")-pos[0]-1),
+			(pos[1] == string::npos) ? dbPaths[1] : dbPaths[1].substr(pos[1]+1, dbPaths[1].rfind(".dat")-pos[1]-1)
 		};
-		const string onlyPaths[2] = {"only-on-"+bases[0]+".txt", "only-on-"+bases[1]+".txt"};
-		const string copyPaths[2] = {"copy-from-"+bases[0]+".sh", "copy-from-"+bases[1]+".sh"};
 		
-		return comp(dbPaths, onlyPaths, copyPaths);
+		return comp(dbPaths, {
+			basedir+"/only-on-"+bases[0]+".txt",
+			basedir+"/only-on-"+bases[1]+".txt"}, {
+			basedir+"/copy-from-"+bases[0]+".sh",
+			basedir+"/copy-from-"+bases[1]+".sh"}, {
+			basedir+"/matches-from-"+bases[0]+"-to-"+bases[1]+".dat",
+			basedir+"/matches-from-"+bases[1]+"-to-"+bases[0]+".dat"}
+		);
 	}
 	else if(action == "lsdup")
 	{
